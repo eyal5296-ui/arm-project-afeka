@@ -1,0 +1,22 @@
+unction [q3,q1,q2,q4]= fcn(t_dog_deg,x_o,y_o,z_o,q4_w_deg,x_world,y_world,z_world)
+
+l1 = 0.22; % Length of the first segment
+l2 = 0.18; % Length of the second segment
+l4 = 0.2; % Length of the third segment
+
+q4_w = deg2rad(q4_w_deg); % Convert to radians
+%q4_w=0;
+
+x = x_world - x_o;
+y = y_world - y_o;
+z = z_world - z_o;
+
+t_dog=deg2rad(t_dog_deg);
+
+q3 = atan2(y, x)-t_dog; % Base rotation
+r = sqrt(x^2 + y^2); % Horizontal distance
+r_adjusted = r - l4 * cos(q4_w);
+z_adjusted = z - l4 * sin(q4_w);
+q2 = -pi + acos((l1^2 + l2^2 - r_adjusted^2 - z_adjusted^2) / (2 * l1 * l2));
+q1 = atan2(z_adjusted, r_adjusted) - atan2(l2 * sin(q2), l1 + l2 * cos(q2));
+q4=q4_w-q2-q1;
