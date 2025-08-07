@@ -1,0 +1,3 @@
+function [x,y]= fcn(r,q3)
+x=r*cos(q3);
+y=r*sin(q3); 
