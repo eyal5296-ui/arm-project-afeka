@@ -1,0 +1,194 @@
+function robotic_arm_control()
+    % position of do in the world
+    arm_origin = [0, -0, 0];
+
+    % segment lengths
+    l1 = 0.22; % Length of the first segment
+    l2 = 0.18; % Length of the second segment
+    l4 = 0.15; % Length of the third segment
+
+    % angle of end effector to world q4_w
+    q4_w_deg = 0; % Initial angle in degrees
+    q4_w = deg2rad(q4_w_deg); % Convert to radians
+
+    % end effector position
+    x_world = 0.3;
+    y_world = 0.25;
+    z_world = 0.1;
+
+    % UI control panel
+    fig = uifigure('Name', 'Robotic Arm Control');
+    fig.Position = [100, 100, 400, 500];
+    uilabel(fig, 'Text', 'Arm Controls', 'FontSize', 16, ...
+        'Position', [50, 420, 100, 30], 'HorizontalAlignment', 'center');
+
+    % Arm Control buttons
+    uibutton(fig, 'Text', 'r+', 'Position', [50, 380, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('r+', 0.02));
+    uibutton(fig, 'Text', 'r-', 'Position', [110, 380, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('r-', 0.02));
+    uibutton(fig, 'Text', 'z+', 'Position', [50, 330, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('z+', 0.02));
+    uibutton(fig, 'Text', 'z-', 'Position', [110, 330, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('z-', 0.02));
+    uibutton(fig, 'Text', 'q3+', 'Position', [50, 280, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('t+', 0.2));
+    uibutton(fig, 'Text', 'q3-', 'Position', [110, 280, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('t-', 0.2));
+    uibutton(fig, 'Text', 'q4+', 'Position', [50, 230, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('p+', 10));
+    uibutton(fig, 'Text', 'q4-', 'Position', [110, 230, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updatePosition('p-', 10));
+
+    % Dog Controls
+    uilabel(fig, 'Text', 'Dog Controls', 'FontSize', 16, ...
+        'Position', [50, 180, 100, 30], 'HorizontalAlignment', 'center');
+
+    uibutton(fig, 'Text', 'x+', 'Position', [50, 140, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('x+', 0.02));
+    uibutton(fig, 'Text', 'x-', 'Position', [110, 140, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('x-', 0.02));
+    uibutton(fig, 'Text', 'y+', 'Position', [50, 90, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('y+', 0.02));
+    uibutton(fig, 'Text', 'y-', 'Position', [110, 90, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('y-', 0.02));
+    uibutton(fig, 'Text', 'z+', 'Position', [50, 40, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('z+', 0.02));
+    uibutton(fig, 'Text', 'z-', 'Position', [110, 40, 50, 30], ...
+        'ButtonPushedFcn', @(btn, event) updateOrigin('z-', 0.02));
+
+    % update postion function
+    function updatePosition(direction, step)
+        x = x_world - arm_origin(1);
+        y = y_world - arm_origin(2);
+        z = z_world - arm_origin(3);
+        r = sqrt(x^2 + y^2);
+        theta = atan2(y, x);
+
+        % Update end effector position
+        switch direction
+            case 'r+'
+                r = r + step; % Increase radius
+            case 'r-'
+                r = r - step; % Decrease radius
+            case 'z+'
+                z = z + step; % Move up
+            case 'z-'
+                z = z - step; % Move down
+            case 't+'
+                theta = theta + step; % Rotate CCW
+            case 't-'
+                theta = theta - step; % Rotate CW
+            case 'p+'
+                q4_w_deg = q4_w_deg + step; % Increase end angle
+                q4_w = deg2rad(q4_w_deg); % Update q4_w in radians
+            case 'p-'
+                q4_w_deg = q4_w_deg - step; % Decrease end angle
+                q4_w = deg2rad(q4_w_deg); % Update q4_w in radians
+        end
+
+        % udate x,y
+        x = r * cos(theta);
+        y = r * sin(theta);
+        x_world = x + arm_origin(1);
+        y_world = y + arm_origin(2);
+        z_world = z + arm_origin(3);
+        plotArm();
+    end
+
+    % origin update function
+    function updateOrigin(direction, step)
+        switch direction
+            case 'x+'
+                arm_origin(1) = arm_origin(1) + step; % Move origin along +x
+            case 'x-'
+                arm_origin(1) = arm_origin(1) - step; % Move origin along -x
+            case 'y+'
+                arm_origin(2) = arm_origin(2) + step; % Move origin along +y
+            case 'y-'
+                arm_origin(2) = arm_origin(2) - step; % Move origin along -y
+            case 'z+'
+                arm_origin(3) = arm_origin(3) + step; % Move origin along +z
+            case 'z-'
+                arm_origin(3) = arm_origin(3) - step; % Move origin along -z
+        end
+
+        % update xyz
+        x = x_world - arm_origin(1);
+        y = y_world - arm_origin(2);
+        z = z_world - arm_origin(3);
+        x_world = x + arm_origin(1);
+        y_world = y + arm_origin(2);
+        z_world = z + arm_origin(3);
+        plotArm();
+    end
+
+    % plot function
+    function plotArm()
+        x = x_world - arm_origin(1);
+        y = y_world - arm_origin(2);
+        z = z_world - arm_origin(3);
+
+        % calculate angles
+        q3 = atan2(y, x); 
+        r = sqrt(x^2 + y^2); 
+        r_adjusted = r - l4 * cos(q4_w);
+        z_adjusted = z - l4 * sin(q4_w);
+        q2 = -pi + acos((l1^2 + l2^2 - r_adjusted^2 - z_adjusted^2) / (2 * l1 * l2));
+        q1 = atan2(z_adjusted, r_adjusted) - atan2(l2 * sin(q2), l1 + l2 * cos(q2));
+        %q1*180/3.14159
+        %q2*180/3.14159
+        %q3*180/3.14159
+        %q4=(q4_w-q2-q1)*180/3.14159
+        q1;
+        q2;
+        q3;
+        q4=(q4_w-q2-q1);
+
+        % joint positions
+        x1 = l1 * cos(q1) * cos(q3);
+        y1 = l1 * cos(q1) * sin(q3);
+        z1 = l1 * sin(q1);
+        x2 = x1 + l2 * cos(q1 + q2) * cos(q3);
+        y2 = y1 + l2 * cos(q1 + q2) * sin(q3);
+        z2 = z1 + l2 * sin(q1 + q2);
+        x3 = x2 + l4 * cos(q4_w) * cos(q3);
+        y3 = y2 + l4 * cos(q4_w) * sin(q3);
+        z3 = z2 + l4 * sin(q4_w);
+
+        % Transform to world coordinates
+        x1_world = x1 + arm_origin(1);
+        y1_world = y1 + arm_origin(2);
+        z1_world = z1 + arm_origin(3);
+        x2_world = x2 + arm_origin(1);
+        y2_world = y2 + arm_origin(2);
+        z2_world = z2 + arm_origin(3);
+        x3_world = x3 + arm_origin(1);
+        y3_world = y3 + arm_origin(2);
+        z3_world = z3 + arm_origin(3);
+
+        % Plot the robotic arm
+        figure(1);
+        clf;
+        hold on;
+        axis equal;
+        grid on;
+        xlim([-0.5 0.5]);
+        ylim([-0.5 0.5]);
+        zlim([0 0.5]);
+        xlabel('X');
+        ylabel('Y');
+        zlabel('Z');
+        title('3D 3-Segment Robotic Arm Simulation');
+        plot3([arm_origin(1) x1_world], [arm_origin(2) y1_world], [arm_origin(3) z1_world], 'b-', 'LineWidth', 2);
+        plot3([x1_world x2_world], [y1_world y2_world], [z1_world z2_world], 'r-', 'LineWidth', 2);
+        plot3([x2_world x3_world], [y2_world y3_world], [z2_world z3_world], 'g-', 'LineWidth', 2);
+        plot3(arm_origin(1), arm_origin(2), arm_origin(3), 'yo', 'MarkerFaceColor', 'y', 'MarkerSize', 10);
+        plot3(x3_world, y3_world, z3_world, 'ko', 'MarkerFaceColor', 'k');
+        view(3);
+        hold off;
+    end
+
+    plotArm();
+    
+end
