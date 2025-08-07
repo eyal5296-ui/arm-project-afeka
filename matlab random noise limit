@@ -1,0 +1,17 @@
+function y = fcn(u,v)
+if (u>0.1)
+    if(v>0)
+        v=-v;
+    end
+end
+if (u>0.1)
+    if(v>0)
+        v=-v;
+    end
+end
+if (u<0.05)
+    if(v<0)
+        v=-v;
+    end
+end
+
