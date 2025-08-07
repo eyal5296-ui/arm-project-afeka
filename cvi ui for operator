@@ -1,0 +1,415 @@
+#include <windows.h>
+	#include <utility.h>
+	#include <Xinput.h>
+	#include <ansi_c.h>
+	#include <rs232.h>
+	#include <cvirte.h>
+	#include <userint.h>
+
+
+	#define PI 3.14159
+
+	#pragma comment(lib, "Xinput.lib")
+
+	#include "serial controller.h"
+
+	#define CANVAS_WIDTH  280
+	#define CANVAS_HEIGHT 230
+
+	float r=0,z=0,ew=0,a1=0,a2=0,ep=0,er=0,az=0,ae=0;
+
+	int CVICALLBACK PollXboxController(void *functionData);
+	void DrawArm();
+
+	int port = 7;
+	static int panelHandle;
+	static int pollingHandle;
+	static int stopPolling = 0;
+
+	double l1 = 0.22;
+	double l2 = 0.18;
+	double l4 = 0.2;
+
+	double radians1 = 0;     
+	double radians2 = 0;
+	double radians4 = 0;
+
+	int end1X;
+	int end1Y;
+	int end2X;
+	int end2Y;
+	int end4X;
+	int end4Y;
+
+	int main (int argc, char *argv[])
+	{
+	    if (InitCVIRTE (0, argv, 0) == 0)
+	        return -1;
+	    if ((panelHandle = LoadPanel (0, "serial controller.uir", PANEL)) < 0)
+	        return -1;
+	    DisplayPanel (panelHandle);
+
+	    RunUserInterface ();
+
+	    DiscardPanel (panelHandle);
+	    CloseCom(port);
+
+	    // Stop polling
+	    stopPolling = 1;
+	    CmtWaitForThreadPoolFunctionCompletion(DEFAULT_THREAD_POOL_HANDLE, pollingHandle, OPT_TP_PROCESS_EVENTS_WHILE_WAITING);
+	    CmtReleaseThreadPoolFunctionID(DEFAULT_THREAD_POOL_HANDLE, pollingHandle);
+
+
+	    return 0;
+	}
+
+	int CVICALLBACK Exit (int panel, int event, void *callbackData, int eventData1, int eventData2)
+	{
+	    switch (event)
+	    {
+	        case EVENT_CLOSE:
+	            QuitUserInterface (0);
+	            break;
+	    }
+	    return 0;
+	}
+
+	void CVICALLBACK ReactToArduino (int portNumber, int eventMask, void *callbackData)
+	{
+	    char data[150];
+	    int bytesRead;
+
+	    while (GetInQLen(port) > 0)
+	    {
+	        bytesRead = ComRdTerm(port, data, 150, '\n');
+	        if (bytesRead > 0)
+	        {
+	            data[bytesRead - 1] = '\0';
+				if (data[0]!='q')
+				{
+		            InsertTextBoxLine(panelHandle, PANEL_TEXTBOX, -1, data);
+					SetActiveCtrl (panelHandle, PANEL_TEXTBOX);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+				}
+				else
+				{
+					//InsertTextBoxLine(panelHandle, PANEL_TEXTBOX, -1, data);
+					sscanf(data, "q,r=%f,z=%f,ew=%f,a1=%f,a2=%f,ep=%f,er=%f,az=%f,ae=%f", &r, &z, &ew, &a1, &a2, &ep, &er,&az,&ae);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_R, r);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_Z, z);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_EW, ew);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_A1, a1);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_A2, a2);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_EP, ep);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_ER, er);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_AZ, az*270/180);
+					SetCtrlVal (panelHandle, PANEL_NUMERIC_AE, ae);
+					DrawArm();
+				}
+				
+	        }
+	    }
+	}
+
+	int CVICALLBACK ConnectToArduino (int panel, int control, int event, void *callbackData, int eventData1, int eventData2)
+	{
+	    switch (event)
+	    {
+	        case EVENT_COMMIT:
+	        {
+	            int status = OpenComConfig(port, "", 115200, 0, 8, 1, 512, 512);
+	            if (status < 0)
+	            {
+	                MessagePopup("Error", "Failed to open COM port");
+	                return -1;
+	            }
+
+	            InstallComCallback(port, LWRS_RXFLAG, 0, '\n', ReactToArduino, 0);
+	            FlushInQ(port);
+
+	            // Start polling Xbox controller ONLY after successful port open
+	            CmtScheduleThreadPoolFunction(DEFAULT_THREAD_POOL_HANDLE, PollXboxController, NULL, &pollingHandle);
+	            break;
+	        }
+	    }
+	    return 0;
+	}
+
+	int CVICALLBACK SendToArduino (int panel, int control, int event, void *callbackData, int eventData1, int eventData2)
+	{
+	    char data[50];
+	    switch (event)
+	    {
+	        case EVENT_COMMIT:
+	            GetCtrlVal(panelHandle, PANEL_STRING, data);
+	            ComWrt(port, data, strlen(data) + 1);
+	            break;
+	    }
+	    return 0;
+	}
+
+	// ----------------------
+	// Xbox Controller Logic
+	// ----------------------
+
+	int CVICALLBACK PollXboxController (void *functionData)
+	{
+	    const SHORT DEADZONE = 8000;
+	    int lastLX = -999, lastLY = -999, lastRX = -999, lastRY = -999;
+	    int lastLT = -1, lastRT = -1;
+	    WORD lastButtons = 0;
+
+	    while (!stopPolling)
+	    {
+	        XINPUT_STATE state;
+	        ZeroMemory(&state, sizeof(XINPUT_STATE));
+	        DWORD result = XInputGetState(0, &state);
+
+	        if (result == ERROR_SUCCESS)
+	        {
+	            // LEFT STICK
+	            SHORT lx = state.Gamepad.sThumbLX;
+	            SHORT ly = state.Gamepad.sThumbLY;
+	            if (abs(lx) < DEADZONE) lx = 0;
+	            if (abs(ly) < DEADZONE) ly = 0;
+	            int mappedLX = (int)((lx / 32767.0) * 255);
+	            int mappedLY = (int)((ly / 32767.0) * 255);
+
+	            // RIGHT STICK
+	            SHORT rx = state.Gamepad.sThumbRX;
+	            SHORT ry = state.Gamepad.sThumbRY;
+	            if (abs(rx) < DEADZONE) rx = 0;
+	            if (abs(ry) < DEADZONE) ry = 0;
+	            int mappedRX = (int)((rx / 32767.0) * 255);
+	            int mappedRY = (int)((ry / 32767.0) * 255);
+
+	            // Clamp
+	            if (mappedLX > 255) mappedLX = 255;
+	            if (mappedLX < -255) mappedLX = -255;
+	            if (mappedLY > 255) mappedLY = 255;
+	            if (mappedLY < -255) mappedLY = -255;
+
+	            if (mappedRX > 255) mappedRX = 255;
+	            if (mappedRX < -255) mappedRX = -255;
+	            if (mappedRY > 255) mappedRY = 255;
+	            if (mappedRY < -255) mappedRY = -255;
+
+	            // TRIGGERS
+	            int lt = state.Gamepad.bLeftTrigger;
+	            int rt = state.Gamepad.bRightTrigger;
+
+	            // BUTTONS
+	            WORD buttons = state.Gamepad.wButtons;
+	            int a = (buttons & XINPUT_GAMEPAD_A) ? 1 : 0;
+	            int b = (buttons & XINPUT_GAMEPAD_B) ? 1 : 0;
+	            int x = (buttons & XINPUT_GAMEPAD_X) ? 1 : 0;
+	            int y = (buttons & XINPUT_GAMEPAD_Y) ? 1 : 0;
+	            int lb = (buttons & XINPUT_GAMEPAD_LEFT_SHOULDER) ? 1 : 0;
+	            int rb = (buttons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? 1 : 0;
+
+	            // Only send if something changed
+	            if (mappedLX != lastLX || mappedLY != lastLY ||
+	                mappedRX != lastRX || mappedRY != lastRY ||
+	                lt != lastLT || rt != lastRT ||
+	                buttons != lastButtons)
+	            {
+	                char msg[100];
+	                sprintf(msg, "LS%d,%dRS%d,%dLT%dRT%dA%dB%dX%dY%dLB%dRB%d",
+	                        mappedLX, mappedLY,
+	                        mappedRX, mappedRY,
+	                        lt, rt,
+	                        a, b, x, y, lb, rb);
+
+	                // Send null-terminated string to Arduino
+	                ComWrt(port, msg, strlen(msg) + 1);  // +1 includes the '\0' terminator
+
+	                //printf("%s\n", msg);
+	                InsertTextBoxLine(panelHandle, PANEL_TEXTBOX, -1, msg);  // Debug
+					SetActiveCtrl (panelHandle, PANEL_TEXTBOX);
+	    			FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					FakeKeystroke (VAL_DOWN_ARROW_VKEY);
+					
+	                lastLX = mappedLX;
+	                lastLY = mappedLY;
+	                lastRX = mappedRX;
+	                lastRY = mappedRY;
+	                lastLT = lt;
+	                lastRT = rt;
+	                lastButtons = buttons;
+	            }
+	        }
+
+	        Sleep(100); // Poll every 100 ms
+	    }
+
+	    return 0;
+	}
+
+	void DrawArm()
+	{
+	    CanvasStartBatchDraw(panelHandle, PANEL_CANVAS);
+	    CanvasClear(panelHandle, PANEL_CANVAS, VAL_ENTIRE_OBJECT);
+
+	    // Base point
+	    int baseX = 30;
+	    int baseY = CANVAS_HEIGHT - 30;
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS, ATTR_PEN_COLOR, VAL_RED);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS, ATTR_PEN_STYLE, VAL_SOLID);
+		SetCtrlAttribute (panelHandle, PANEL_CANVAS, ATTR_PEN_WIDTH, 3);
+	    CanvasDrawOval(panelHandle, PANEL_CANVAS, MakeRect(baseY - 4, baseX - 4, 9, 9), VAL_DRAW_FRAME_AND_INTERIOR);
+
+	    double pixelsPerMeter = 80.0 / 0.22;
+
+	    // Angles in radians
+	    radians1 = a1 * (PI / 180.0);
+	    radians2 = (a1 + a2) * (PI / 180.0);
+	    radians4 = (a1 + a2 + ep) * (PI / 180.0);
+
+	    // ---- Link 1 ----
+	    int x1 = (int)(baseX + pixelsPerMeter * l1 * cos(radians1));
+	    int y1 = (int)(baseY - pixelsPerMeter * l1 * sin(radians1));
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS, ATTR_PEN_COLOR, VAL_BLUE);
+	    CanvasDrawLine(panelHandle, PANEL_CANVAS, MakePoint(baseX, baseY), MakePoint(x1, y1));
+
+	    // ---- Link 2 ---- (starts from end of Link 1)
+	    int x2 = (int)(x1 + pixelsPerMeter * l2 * cos(radians2));
+	    int y2 = (int)(y1 - pixelsPerMeter * l2 * sin(radians2));
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS, ATTR_PEN_COLOR, VAL_GREEN);
+	    CanvasDrawLine(panelHandle, PANEL_CANVAS, MakePoint(x1, y1), MakePoint(x2, y2));
+
+	    // ---- Link 4 ---- (starts from end of Link 2)
+	    int x4 = (int)(x2 + pixelsPerMeter * l4 * cos(radians4));
+	    int y4 = (int)(y2 - pixelsPerMeter * l4 * sin(radians4));
+
+		SetCtrlAttribute (panelHandle, PANEL_CANVAS, ATTR_PEN_COLOR, VAL_YELLOW);
+	    CanvasDrawLine(panelHandle, PANEL_CANVAS, MakePoint(x2, y2), MakePoint(x4, y4));
+		
+		 // === Azimuth and rll
+		CanvasStartBatchDraw(panelHandle, PANEL_CANVAS_2);
+	    CanvasClear(panelHandle, PANEL_CANVAS_2, VAL_ENTIRE_OBJECT);
+		CanvasStartBatchDraw(panelHandle, PANEL_CANVAS_4);
+	    CanvasClear(panelHandle, PANEL_CANVAS_4, VAL_ENTIRE_OBJECT);
+
+	    int canvasSize = 120;
+	    int centerX = canvasSize / 2;
+	    int centerY = canvasSize / 2;
+	    int radius = centerX - 6; // Leave a margin
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_2, ATTR_PEN_COLOR, VAL_BLACK);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_2, ATTR_PEN_WIDTH, 1);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_2, ATTR_PEN_STYLE, VAL_SOLID);
+		SetCtrlAttribute(panelHandle, PANEL_CANVAS_4, ATTR_PEN_COLOR, VAL_BLACK);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_4, ATTR_PEN_WIDTH, 1);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_4, ATTR_PEN_STYLE, VAL_SOLID);
+
+	    // Draw the circle
+	    CanvasDrawOval(panelHandle, PANEL_CANVAS_2,
+	        MakeRect(centerY - radius, centerX - radius, 2 * radius, 2 * radius),
+	        VAL_DRAW_FRAME);
+		CanvasDrawOval(panelHandle, PANEL_CANVAS_4,
+	        MakeRect(centerY - radius, centerX - radius, 2 * radius, 2 * radius),
+	        VAL_DRAW_FRAME);
+
+	    // Draw radial lines every 15 degrees
+	    for (int angle = 0; angle < 360; angle += 15)
+	    {
+	        double radians = angle * (PI / 180.0);
+	        int xEnd = (int)(centerX + radius * cos(radians));
+	        int yEnd = (int)(centerY - radius * sin(radians)); // inverted Y-axis
+
+	        CanvasDrawLine(panelHandle, PANEL_CANVAS_2,
+	            MakePoint(centerX, centerY), MakePoint(xEnd, yEnd));
+			 CanvasDrawLine(panelHandle, PANEL_CANVAS_4,
+	            MakePoint(centerX, centerY), MakePoint(xEnd, yEnd));
+	    }
+		// === Draw azimuth angle line ===
+	    double azAngle = az * 270.0 / 180.0;
+	    double azRadians = azAngle * (PI / 180.0);
+	    int azX = (int)(centerX + radius * cos(azRadians));
+	    int azY = (int)(centerY - radius * sin(azRadians)); // Y is inverted
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_2, ATTR_PEN_COLOR, VAL_RED);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_2, ATTR_PEN_WIDTH, 2);
+
+	    CanvasDrawLine(panelHandle, PANEL_CANVAS_2,
+        MakePoint(centerX, centerY), MakePoint(azX, azY));
+		
+		// === Draw roll angle diameter line ===
+	    double rollRadians = er * (PI / 180.0);
+	    int rollX1 = (int)(centerX + radius * cos(rollRadians));
+	    int rollY1 = (int)(centerY - radius * sin(rollRadians));
+	    int rollX2 = (int)(centerX - radius * cos(rollRadians));
+	    int rollY2 = (int)(centerY + radius * sin(rollRadians));
+
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_4, ATTR_PEN_COLOR, VAL_RED);
+	    SetCtrlAttribute(panelHandle, PANEL_CANVAS_4, ATTR_PEN_WIDTH, 2);
+
+    	CanvasDrawLine(panelHandle, PANEL_CANVAS_4, MakePoint(rollX1, rollY1), MakePoint(rollX2, rollY2));
+		
+		
+        
+	     // === Rigid, symmetric gripper jaws on CANVAS_3 ===
+    	CanvasStartBatchDraw(panelHandle, PANEL_CANVAS_3);
+		CanvasClear(panelHandle, PANEL_CANVAS_3, VAL_ENTIRE_OBJECT);
+
+		int canvasSize3 = 120;
+		int gripCenterY = canvasSize3 / 2 +10;
+		double baseSpacing = 10.0;               // Minimum spacing between jaws
+	    double dynamicOffset = ae * 0.15;        // Movement based on ae
+	    double totalOffset = baseSpacing + dynamicOffset;
+
+    	int leftX = (int)(canvasSize3 / 2 - totalOffset);
+    	int rightX = (int)(canvasSize3 / 2 + totalOffset);
+
+		int jawHeight = 120; // Total vertical size
+		int halfHeight = jawHeight / 2;
+
+
+		// All Y positions for both jaws
+		int topY = gripCenterY - halfHeight;
+		int midY = gripCenterY;
+		int botY = gripCenterY + halfHeight;
+
+		// Set pen style
+		SetCtrlAttribute(panelHandle, PANEL_CANVAS_3, ATTR_PEN_COLOR, VAL_BLACK);
+		SetCtrlAttribute(panelHandle, PANEL_CANVAS_3, ATTR_PEN_WIDTH, 2);
+		SetCtrlAttribute(panelHandle, PANEL_CANVAS_3, ATTR_PEN_STYLE, VAL_SOLID);
+
+		// Left jaw: shape >
+		CanvasDrawLine(panelHandle, PANEL_CANVAS_3, MakePoint(leftX, midY), MakePoint(leftX + 10, topY));
+		CanvasDrawLine(panelHandle, PANEL_CANVAS_3, MakePoint(leftX, midY), MakePoint(leftX + 10, botY));
+
+		// Right jaw: shape <
+		CanvasDrawLine(panelHandle, PANEL_CANVAS_3, MakePoint(rightX, midY), MakePoint(rightX - 10, topY));
+		CanvasDrawLine(panelHandle, PANEL_CANVAS_3, MakePoint(rightX, midY), MakePoint(rightX - 10, botY));
+
+		CanvasEndBatchDraw(panelHandle, PANEL_CANVAS_3);
+
+
+	
+
+	    CanvasEndBatchDraw(panelHandle, PANEL_CANVAS);
+		CanvasEndBatchDraw(panelHandle, PANEL_CANVAS_2);
+		CanvasEndBatchDraw(panelHandle, PANEL_CANVAS_4);
+		CanvasEndBatchDraw(panelHandle, PANEL_CANVAS_3);
+	}
+ 
+
+ 
